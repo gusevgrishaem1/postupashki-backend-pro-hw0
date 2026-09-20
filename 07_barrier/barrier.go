@@ -18,19 +18,24 @@ func New(n int) *Barrier {
 }
 
 func (b *Barrier) Wait() {
+	round := atomic.LoadUint32(&b.round)
+
 	for {
 		curr := atomic.LoadUint32(&b.arrived)
 
 		next := curr + 1
 		if atomic.CompareAndSwapUint32(&b.arrived, curr, next) {
 			if next == b.need {
-				atomic.AddUint32(&b.round, 1)
 				atomic.StoreUint32(&b.arrived, 0)
+				atomic.AddUint32(&b.round, 1)
 				futex.WakeAll(&b.round)
-				return
+				break
 			}
 
-			futex.Wait(&b.round, b.round)
+			for atomic.LoadUint32(&b.round) == round {
+				futex.Wait(&b.round, round)
+			}
+
 			break
 		}
 	}
