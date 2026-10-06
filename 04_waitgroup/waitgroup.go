@@ -12,7 +12,10 @@ type WaitGroup struct {
 func (wg *WaitGroup) Add(delta int) {
 	for {
 		curr := int(atomic.LoadUint32(&wg.count))
-		next := max(curr+delta, 0)
+		next := curr + delta
+		if next < 0 {
+			panic("waitgroup: negative counter")
+		}
 		if atomic.CompareAndSwapUint32(&wg.count, uint32(curr), uint32(next)) {
 			if next == 0 {
 				futex.WakeAll(&wg.count)
@@ -23,21 +26,7 @@ func (wg *WaitGroup) Add(delta int) {
 }
 
 func (wg *WaitGroup) Done() {
-	for {
-		curr := atomic.LoadUint32(&wg.count)
-		if curr == 0 {
-			panic("Done")
-		}
-
-		next := curr - 1
-		if atomic.CompareAndSwapUint32(&wg.count, curr, next) {
-			if next == 0 {
-				futex.WakeAll(&wg.count)
-			}
-			break
-		}
-	}
-
+	wg.Add(-1)
 }
 
 func (wg *WaitGroup) Wait() {

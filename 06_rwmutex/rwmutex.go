@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	writer uint32 = 1 << 31
-	reader        = writer - 1
+	writer        uint32 = 1 << 31
+	writerWaiting uint32 = 1 << 30
+	reader               = writerWaiting - 1
 )
 
 type RWMutex struct {
@@ -18,7 +19,7 @@ func (rw *RWMutex) RLock() {
 	for {
 		curr := atomic.LoadUint32(&rw.state)
 
-		if curr&writer != 0 {
+		if curr&(writer|writerWaiting) != 0 {
 			futex.Wait(&rw.state, curr)
 			continue
 		}
@@ -35,29 +36,45 @@ func (rw *RWMutex) RUnlock() {
 		curr := atomic.LoadUint32(&rw.state)
 
 		if curr&reader == 0 {
-			panic("rwmutex.RUnlock")
+			panic("rwmutex: runlock of unlocked read lock")
 		}
 
 		next := curr - 1
 		if atomic.CompareAndSwapUint32(&rw.state, curr, next) {
-			futex.Wake(&rw.state)
+			if next&reader == 0 {
+				futex.WakeAll(&rw.state)
+			}
 			break
 		}
 	}
 }
 
 func (rw *RWMutex) Lock() {
+	if atomic.CompareAndSwapUint32(&rw.state, 0, writer) {
+		return
+	}
 	for {
 		curr := atomic.LoadUint32(&rw.state)
 
-		if curr != 0 {
+		if curr&(writer|writerWaiting) != 0 {
 			futex.Wait(&rw.state, curr)
 			continue
 		}
 
-		if atomic.CompareAndSwapUint32(&rw.state, curr, curr|writer) {
+		if atomic.CompareAndSwapUint32(&rw.state, curr, curr|writerWaiting) {
 			break
 		}
+	}
+
+	for {
+		curr := atomic.LoadUint32(&rw.state)
+		if curr == writerWaiting {
+			if atomic.CompareAndSwapUint32(&rw.state, writerWaiting, writer) {
+				return
+			}
+			continue
+		}
+		futex.Wait(&rw.state, curr)
 	}
 }
 
@@ -66,11 +83,11 @@ func (rw *RWMutex) Unlock() {
 		curr := atomic.LoadUint32(&rw.state)
 
 		if curr&writer == 0 {
-			panic("rwmutex.Unlock")
+			panic("rwmutex: unlock of unlocked write lock")
 		}
 
 		if atomic.CompareAndSwapUint32(&rw.state, curr, curr&^writer) {
-			futex.Wake(&rw.state)
+			futex.WakeAll(&rw.state)
 			break
 		}
 	}

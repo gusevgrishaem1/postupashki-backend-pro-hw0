@@ -5,28 +5,32 @@ import (
 	"sync/atomic"
 )
 
-type Spinlock struct {
+type lockState struct {
 	locked atomic.Bool
 }
 
+func (s *lockState) TryLock() bool {
+	return s.locked.CompareAndSwap(false, true)
+}
+
+func (s *lockState) Unlock() {
+	if !s.locked.CompareAndSwap(true, false) {
+		panic("spinlock: unlock of unlocked lock")
+	}
+}
+
+type Spinlock struct {
+	lockState
+}
+
 func (s *Spinlock) Lock() {
-	for !s.locked.CompareAndSwap(false, true) {
+	for !s.TryLock() {
 		runtime.Gosched()
 	}
 }
 
-func (s *Spinlock) TryLock() bool {
-	return s.locked.CompareAndSwap(false, true)
-}
-
-func (s *Spinlock) Unlock() {
-	if !s.locked.CompareAndSwap(true, false) {
-		panic("Unlock")
-	}
-}
-
 type TTAS struct {
-	locked atomic.Bool
+	lockState
 }
 
 func (s *TTAS) Lock() {
@@ -35,19 +39,9 @@ func (s *TTAS) Lock() {
 			runtime.Gosched()
 			continue
 		}
-		if s.locked.CompareAndSwap(false, true) {
+		if s.TryLock() {
 			break
 		}
 		runtime.Gosched()
-	}
-}
-
-func (s *TTAS) TryLock() bool {
-	return s.locked.CompareAndSwap(false, true)
-}
-
-func (s *TTAS) Unlock() {
-	if !s.locked.CompareAndSwap(true, false) {
-		panic("Unlock")
 	}
 }

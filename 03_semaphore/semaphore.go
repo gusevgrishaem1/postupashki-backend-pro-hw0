@@ -7,48 +7,40 @@ import (
 
 type Semaphore struct {
 	permits uint32
+	waiters int32
 }
 
 func New(n int) *Semaphore {
-	s := new(Semaphore)
-	atomic.StoreUint32(&s.permits, uint32(n))
-	return s
+	if n < 0 {
+		panic("semaphore: negative permit count")
+	}
+	return &Semaphore{permits: uint32(n)}
 }
 
 func (s *Semaphore) Acquire() {
-	for {
-		curr := atomic.LoadUint32(&s.permits)
-		if curr == 0 {
-			futex.Wait(&s.permits, 0)
-			continue
-		}
-
-		next := curr - 1
-		if atomic.CompareAndSwapUint32(&s.permits, curr, next) {
-			break
-		}
+	for !s.TryAcquire() {
+		atomic.AddInt32(&s.waiters, 1)
+		futex.Wait(&s.permits, 0)
+		atomic.AddInt32(&s.waiters, -1)
 	}
 }
 
 func (s *Semaphore) TryAcquire() bool {
-	curr := atomic.LoadUint32(&s.permits)
-	if curr == 0 {
-		return false
+	for {
+		curr := atomic.LoadUint32(&s.permits)
+		if curr == 0 {
+			return false
+		}
+		if atomic.CompareAndSwapUint32(&s.permits, curr, curr-1) {
+			return true
+		}
 	}
-
-	next := curr - 1
-	return atomic.CompareAndSwapUint32(&s.permits, curr, next)
 }
 
 func (s *Semaphore) Release() {
-	for {
-		curr := atomic.LoadUint32(&s.permits)
-
-		next := curr + 1
-		if atomic.CompareAndSwapUint32(&s.permits, curr, next) {
-			futex.Wake(&s.permits)
-			break
-		}
+	atomic.AddUint32(&s.permits, 1)
+	if atomic.LoadInt32(&s.waiters) != 0 {
+		futex.Wake(&s.permits)
 	}
 }
 

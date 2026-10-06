@@ -2,6 +2,7 @@ package mutex
 
 import (
 	"primitives/internal/futex"
+	"runtime"
 	"sync/atomic"
 )
 
@@ -20,19 +21,15 @@ func (m *Mutex) Lock() {
 		return
 	}
 
-	for {
-		if atomic.CompareAndSwapUint32(&m.state, free, contended) {
-			break
+	for range 4 {
+		if atomic.LoadUint32(&m.state) == free && m.TryLock() {
+			return
 		}
+		runtime.Gosched()
+	}
 
-		if atomic.LoadUint32(&m.state) == contended {
-			futex.Wait(&m.state, contended)
-			continue
-		}
-
-		if atomic.CompareAndSwapUint32(&m.state, held, contended) {
-			futex.Wait(&m.state, contended)
-		}
+	for atomic.SwapUint32(&m.state, contended) != free {
+		futex.Wait(&m.state, contended)
 	}
 }
 
@@ -41,14 +38,11 @@ func (m *Mutex) TryLock() bool {
 }
 
 func (m *Mutex) Unlock() {
-	if atomic.CompareAndSwapUint32(&m.state, held, free) {
-		return
+	old := atomic.SwapUint32(&m.state, free)
+	if old == free {
+		panic("mutex: unlock of unlocked mutex")
 	}
-
-	if atomic.CompareAndSwapUint32(&m.state, contended, free) {
+	if old == contended {
 		futex.Wake(&m.state)
-		return
 	}
-
-	panic("Unlock")
 }
