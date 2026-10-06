@@ -1,35 +1,47 @@
 package spinlock
 
-import "sync/atomic"
+import (
+	"runtime"
+	"sync/atomic"
+)
+
+type lockState struct {
+	locked atomic.Bool
+}
+
+func (s *lockState) TryLock() bool {
+	return s.locked.CompareAndSwap(false, true)
+}
+
+func (s *lockState) Unlock() {
+	if !s.locked.CompareAndSwap(true, false) {
+		panic("spinlock: unlock of unlocked lock")
+	}
+}
 
 type Spinlock struct {
-	locked atomic.Bool
+	lockState
 }
 
 func (s *Spinlock) Lock() {
-	panic("не реализовано")
-}
-
-func (s *Spinlock) TryLock() bool {
-	panic("не реализовано")
-}
-
-func (s *Spinlock) Unlock() {
-	panic("не реализовано")
+	for !s.TryLock() {
+		runtime.Gosched()
+	}
 }
 
 type TTAS struct {
-	locked atomic.Bool
+	lockState
 }
 
 func (s *TTAS) Lock() {
-	panic("не реализовано")
-}
-
-func (s *TTAS) TryLock() bool {
-	panic("не реализовано")
-}
-
-func (s *TTAS) Unlock() {
-	panic("не реализовано")
+	for {
+		if s.locked.Load() {
+			runtime.Gosched()
+			continue
+		}
+		if s.TryLock() {
+			break
+		}
+		runtime.Gosched()
+	}
 }
